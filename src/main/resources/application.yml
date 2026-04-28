@@ -1,0 +1,19 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: Backend_REST_ERP
+  datasource:
+    url: jdbc:postgresql://localhost:5432/rest_erp_dw
+    username: postgres
+    password: Akef123*
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: none
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
