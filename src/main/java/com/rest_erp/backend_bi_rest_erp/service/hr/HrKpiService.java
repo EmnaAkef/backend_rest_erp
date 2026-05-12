@@ -142,21 +142,20 @@ public class HrKpiService {
     }
 
     public List<Map<String, Object>> getHeadcountTrend(LocalDate startDate, LocalDate endDate) {
-
         Integer companyKey = TenantContext.getCompanyKey();
 
-        List<Object[]> rows = hrKpiRepository.getHeadcountTrend(companyKey);
+        List<Object[]> rows = hrKpiRepository.getHeadcountTrend(companyKey, startDate, endDate);
 
-        List<Map<String, Object>> result = new ArrayList<>();
+        return rows.stream()
+                .map(row -> {
+                    Map<String, Object> map = new HashMap<>();
 
-        for (Object[] row : rows) {
-            Map<String, Object> item = new HashMap<>();
-            item.put("label", row[0]);
-            item.put("value", row[1]);
-            result.add(item);
-        }
+                    map.put("period", row[0]);
+                    map.put("headcount", row[1] != null ? ((Number) row[1]).longValue() : 0);
 
-        return result;
+                    return map;
+                })
+                .toList();
     }
 
     public java.util.List<com.rest_erp.backend_bi_rest_erp.dto.hr.AttendanceTrendItem> getAttendanceTrend(
@@ -204,25 +203,28 @@ public class HrKpiService {
         return result;
     }
 
-    public java.util.List<com.rest_erp.backend_bi_rest_erp.dto.hr.EmployeesByDepartmentItem> getEmployeesByDepartment() {
-
+    public List<Map<String, Object>> getEmployeesByDepartment(
+            LocalDate startDate,
+            LocalDate endDate
+    ) {
         Integer companyKey = TenantContext.getCompanyKey();
 
-        java.util.List<Object[]> rows = hrKpiRepository.getEmployeesByDepartment(companyKey);
+        List<Object[]> rows = hrKpiRepository.getEmployeesByDepartment(
+                companyKey,
+                startDate,
+                endDate
+        );
 
-        java.util.List<com.rest_erp.backend_bi_rest_erp.dto.hr.EmployeesByDepartmentItem> result =
-                new java.util.ArrayList<>();
+        return rows.stream()
+                .map(row -> {
+                    Map<String, Object> map = new HashMap<>();
 
-        for (Object[] row : rows) {
-            result.add(
-                    com.rest_erp.backend_bi_rest_erp.dto.hr.EmployeesByDepartmentItem.builder()
-                            .department(row[0] != null ? row[0].toString() : "Unknown Department")
-                            .count(row[1] != null ? ((Number) row[1]).longValue() : 0L)
-                            .build()
-            );
-        }
+                    map.put("department", row[0]);
+                    map.put("count", row[1] != null ? ((Number) row[1]).longValue() : 0);
 
-        return result;
+                    return map;
+                })
+                .toList();
     }
 
     public java.util.List<com.rest_erp.backend_bi_rest_erp.dto.hr.SalaryBenchmarkItem> getSalaryBenchmarking(

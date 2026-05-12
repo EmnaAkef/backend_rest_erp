@@ -42,6 +42,8 @@ public class HrKpiController {
         return ResponseEntity.ok(hrKpiService.getHeadcountTrend(startDate, endDate));
     }
 
+
+
     @GetMapping("/attendance-trend")
     public java.util.List<com.rest_erp.backend_bi_rest_erp.dto.hr.AttendanceTrendItem> getAttendanceTrend(
             @RequestParam(required = false)
@@ -61,8 +63,16 @@ public class HrKpiController {
     }
 
     @GetMapping("/employees-by-department")
-    public java.util.List<com.rest_erp.backend_bi_rest_erp.dto.hr.EmployeesByDepartmentItem> getEmployeesByDepartment() {
-        return hrKpiService.getEmployeesByDepartment();
+    public ResponseEntity<List<Map<String, Object>>> getEmployeesByDepartment(
+            @RequestParam(required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
+
+            @RequestParam(required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate
+    ) {
+        return ResponseEntity.ok(
+                hrKpiService.getEmployeesByDepartment(startDate, endDate)
+        );
     }
 
     @GetMapping("/salary-benchmarking")

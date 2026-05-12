@@ -346,20 +346,46 @@ public class HrKpiRepository {
         return result != null ? new BigDecimal(result.toString()) : BigDecimal.ZERO;
     }
 
-    public List<Object[]> getHeadcountTrend(Integer companyKey) {
-
-        String sql = """
-        SELECT d.month_name, SUM(f.employee_count)
+    public List<Object[]> getHeadcountTrend(
+            Integer companyKey,
+            LocalDate startDate,
+            LocalDate endDate
+    ) {
+        StringBuilder sql = new StringBuilder("""
+        SELECT 
+            CONCAT(d.month_name, ' ', d.year) AS period_label,
+            SUM(f.employee_count) AS total_headcount
         FROM fact_employee_hr f
-        JOIN dim_date d ON d.date_key = f.date_key
+        JOIN dim_date d 
+            ON d.date_key = f.date_key
         WHERE f.company_key = :companyKey
-        GROUP BY d.month, d.month_name
-        ORDER BY d.month
-    """;
+    """);
 
-        return entityManager.createNativeQuery(sql)
-                .setParameter("companyKey", companyKey)
-                .getResultList();
+        if (startDate != null) {
+            sql.append(" AND d.full_date >= :startDate");
+        }
+
+        if (endDate != null) {
+            sql.append(" AND d.full_date <= :endDate");
+        }
+
+        sql.append("""
+        GROUP BY d.year, d.month, d.month_name
+        ORDER BY d.year, d.month
+    """);
+
+        var query = entityManager.createNativeQuery(sql.toString())
+                .setParameter("companyKey", companyKey);
+
+        if (startDate != null) {
+            query.setParameter("startDate", startDate);
+        }
+
+        if (endDate != null) {
+            query.setParameter("endDate", endDate);
+        }
+
+        return query.getResultList();
     }
 
     public java.util.List<Object[]> getAttendanceTrend(
@@ -454,24 +480,50 @@ public class HrKpiRepository {
                 .getResultList();
     }
 
-    public java.util.List<Object[]> getEmployeesByDepartment(Integer companyKey) {
-
-        String sql = """
+    public java.util.List<Object[]> getEmployeesByDepartment(
+            Integer companyKey,
+            LocalDate startDate,
+            LocalDate endDate
+    ) {
+        StringBuilder sql = new StringBuilder("""
         SELECT 
             COALESCE(d.department_name, 'Unknown Department') AS department,
             COUNT(DISTINCT u.user_id) AS employee_count
         FROM dim_user u
-        LEFT JOIN dim_department d ON d.department_key = u.department_key
+        LEFT JOIN dim_department d 
+            ON d.department_key = u.department_key
         WHERE u.company_key = :companyKey
-          AND u.type = 'EMPLOYEE'
-          AND u.is_current = true
+          AND UPPER(u.type) = 'EMPLOYEE'
+    """);
+
+        if (startDate != null && endDate != null) {
+            sql.append("""
+            AND u.effective_from::date <= :endDate
+            AND (
+                u.effective_to IS NULL 
+                OR u.effective_to::date >= :startDate
+            )
+        """);
+        } else {
+            sql.append("""
+            AND u.is_current = true
+        """);
+        }
+
+        sql.append("""
         GROUP BY d.department_name
         ORDER BY employee_count DESC
-    """;
+    """);
 
-        return entityManager.createNativeQuery(sql)
-                .setParameter("companyKey", companyKey)
-                .getResultList();
+        var query = entityManager.createNativeQuery(sql.toString())
+                .setParameter("companyKey", companyKey);
+
+        if (startDate != null && endDate != null) {
+            query.setParameter("startDate", startDate);
+            query.setParameter("endDate", endDate);
+        }
+
+        return query.getResultList();
     }
 
     public Long getActiveJobOffers(Integer companyKey, LocalDate startDate, LocalDate endDate) {
@@ -630,13 +682,39 @@ public class HrKpiRepository {
         StringBuilder sql = new StringBuilder("""
         SELECT
             COALESCE(dep.department_name, 'Unknown Department') AS department,
-            COALESCE(AVG(f.final_salary), 0) AS average_salary,
-            COALESCE(MAX(f.final_salary), 0) AS maximum_salary
+
+            COALESCE(
+                ROUND(
+                    SUM(f.final_salary)::numeric 
+                    / NULLIF(SUM(f.payroll_count), 0),
+                    2
+                ),
+                0
+            ) AS average_salary,
+
+            COALESCE(
+                ROUND(
+                    MAX(
+                        CASE 
+                            WHEN f.payroll_count > 0 
+                            THEN f.final_salary::numeric / f.payroll_count
+                            ELSE f.final_salary::numeric
+                        END
+                    ),
+                    2
+                ),
+                0
+            ) AS maximum_salary
+
         FROM fact_employee_hr f
-        LEFT JOIN dim_department dep ON dep.department_key = f.department_key
-        JOIN dim_date d ON d.date_key = f.date_key
+        LEFT JOIN dim_department dep 
+            ON dep.department_key = f.department_key
+        JOIN dim_date d 
+            ON d.date_key = f.date_key
         WHERE f.company_key = :companyKey
           AND f.final_salary IS NOT NULL
+          AND f.payroll_count IS NOT NULL
+          AND f.payroll_count > 0
     """);
 
         if (startDate != null) {
@@ -676,13 +754,14 @@ public class HrKpiRepository {
         SELECT stage, SUM(count_value) AS total_count
         FROM (
             SELECT
-                'Applications' AS stage,
+                'Submitted' AS stage,
                 COALESCE(SUM(f.applications_count), 0) AS count_value,
                 1 AS stage_order
             FROM fact_job_application f
             JOIN dim_date d ON d.date_key = f.submission_date_key
             WHERE f.company_key = :companyKey
-        """);
+              AND UPPER(f.application_status) IN ('SUBMITTED', 'APPLICATIONS')
+    """);
 
         if (startDate != null) {
             sql.append(" AND d.full_date >= :startDate");
@@ -703,7 +782,7 @@ public class HrKpiRepository {
             JOIN dim_date d ON d.date_key = f.submission_date_key
             WHERE f.company_key = :companyKey
               AND UPPER(f.application_status) IN ('SCREENING', 'SHORTLISTED')
-        """);
+    """);
 
         if (startDate != null) {
             sql.append(" AND d.full_date >= :startDate");
@@ -724,7 +803,7 @@ public class HrKpiRepository {
             JOIN dim_date d ON d.date_key = f.submission_date_key
             WHERE f.company_key = :companyKey
               AND UPPER(f.application_status) IN ('TECHNICAL', 'TECHNICAL_INTERVIEW', 'INTERVIEW')
-        """);
+    """);
 
         if (startDate != null) {
             sql.append(" AND d.full_date >= :startDate");
@@ -738,14 +817,14 @@ public class HrKpiRepository {
             UNION ALL
 
             SELECT
-                'Offer' AS stage,
+                'Accepted' AS stage,
                 COALESCE(SUM(f.applications_count), 0) AS count_value,
                 4 AS stage_order
             FROM fact_job_application f
             JOIN dim_date d ON d.date_key = f.submission_date_key
             WHERE f.company_key = :companyKey
-              AND UPPER(f.application_status) IN ('OFFER', 'OFFER_SENT', 'PROPOSED')
-        """);
+              AND UPPER(f.application_status) IN ('ACCEPTED', 'OFFER', 'OFFER_SENT', 'PROPOSED')
+    """);
 
         if (startDate != null) {
             sql.append(" AND d.full_date >= :startDate");
@@ -760,13 +839,16 @@ public class HrKpiRepository {
 
             SELECT
                 'Hired' AS stage,
-                COALESCE(SUM(f.applications_count), 0) AS count_value,
+                COALESCE(SUM(f.is_hired_flag), 0) AS count_value,
                 5 AS stage_order
             FROM fact_job_application f
             JOIN dim_date d ON d.date_key = f.submission_date_key
             WHERE f.company_key = :companyKey
-              AND f.is_hired_flag = 1
-        """);
+              AND (
+                    UPPER(f.application_status) IN ('HIRED')
+                    OR f.is_hired_flag = 1
+                  )
+    """);
 
         if (startDate != null) {
             sql.append(" AND d.full_date >= :startDate");
