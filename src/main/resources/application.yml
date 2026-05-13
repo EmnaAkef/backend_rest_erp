@@ -7,8 +7,8 @@ spring:
   datasource:
     url: jdbc:postgresql://localhost:5432/rest_erp_dw
     username: postgres
-    password: Akef123*
-    #password: Messaoud123!
+    #password: Akef123*
+    password: Messaoud123!
     driver-class-name: org.postgresql.Driver
 
   jpa:

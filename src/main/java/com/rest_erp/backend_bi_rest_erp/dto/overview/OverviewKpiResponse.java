@@ -20,5 +20,5 @@ public class OverviewKpiResponse {
     private BigDecimal netProfit;
     private BigDecimal winRate;
     private BigDecimal pipelineValue;
-
+    private String currency;
 }

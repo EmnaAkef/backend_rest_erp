@@ -65,13 +65,16 @@ public class OverviewKpiService {
 
         BigDecimal pipelineValue = overviewKpiRepository.getPipelineValue(companyKey);
 
+        String currency = overviewKpiRepository.getCompanyCurrency(companyKey);
+
         return new OverviewKpiResponse(
                 totalEmployees,
                 presenceRate,
                 totalRevenue,
                 netProfit,
                 winRate,
-                pipelineValue
+                pipelineValue,
+                currency
         );
     }
 

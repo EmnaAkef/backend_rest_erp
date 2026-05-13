@@ -453,18 +453,18 @@ public class OverviewKpiRepository {
             COUNT(DISTINCT c.customer_id) AS total_customers,
 
             COUNT(DISTINCT c.customer_id) FILTER (
-                WHERE COALESCE(c.active, false) = true
+                WHERE UPPER(COALESCE(c.status, '')) = 'ACTIVE'
             ) AS active_customers,
 
             COUNT(DISTINCT c.customer_id) FILTER (
-                WHERE COALESCE(c.active, false) = false
+                WHERE UPPER(COALESCE(c.status, '')) = 'INACTIVE'
             ) AS inactive_customers,
 
             CASE
                 WHEN COUNT(DISTINCT c.customer_id) = 0 THEN 0
                 ELSE ROUND(
                     COUNT(DISTINCT c.customer_id) FILTER (
-                        WHERE COALESCE(c.active, false) = true
+                        WHERE UPPER(COALESCE(c.status, '')) = 'ACTIVE'
                     ) * 100.0 / COUNT(DISTINCT c.customer_id),
                     2
                 )
@@ -861,5 +861,22 @@ public class OverviewKpiRepository {
                 companyKey,
                 companyKey
         );
+    }
+    public String getCompanyCurrency(Integer companyKey) {
+        String sql = """
+        SELECT COALESCE(currency, 'USD')
+        FROM dim_company
+        WHERE company_key = ?
+          AND is_current = true
+        LIMIT 1
+        """;
+
+        String result = jdbcTemplate.queryForObject(
+                sql,
+                String.class,
+                companyKey
+        );
+
+        return result != null ? result : "USD";
     }
 }
