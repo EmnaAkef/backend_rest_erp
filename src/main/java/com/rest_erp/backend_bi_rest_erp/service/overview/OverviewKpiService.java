@@ -103,7 +103,7 @@ public class OverviewKpiService {
     public List<OverviewPipelineFunnelItem> getSalesPipelineFunnel(LocalDate startDate, LocalDate endDate) {
         Integer companyKey = TenantContext.getCompanyKey();
 
-        return overviewKpiRepository.getSalesPipelineFunnel(companyKey);
+        return overviewKpiRepository.getSalesPipelineFunnel(companyKey, startDate, endDate);
     }
     public List<OverviewDealStatusItem> getDealStatus(LocalDate startDate, LocalDate endDate) {
         Integer companyKey = TenantContext.getCompanyKey();

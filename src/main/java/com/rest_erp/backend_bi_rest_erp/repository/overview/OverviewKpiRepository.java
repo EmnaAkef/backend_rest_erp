@@ -3,6 +3,8 @@ package com.rest_erp.backend_bi_rest_erp.repository.overview;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 import com.rest_erp.backend_bi_rest_erp.dto.overview.OverviewFinancialTrendItem;
+
+import java.time.LocalDate;
 import java.util.List;
 import java.math.BigDecimal;
 import com.rest_erp.backend_bi_rest_erp.dto.overview.OverviewFinancialTrendItem;
@@ -201,9 +203,10 @@ public class OverviewKpiRepository {
             Integer endDateKey
     ) {
         String sql = """
-        WITH cash_balance AS (
+        WITH latest_cash_snapshot AS (
             SELECT
-                COALESCE(SUM(f.close_balance_debit - f.close_balance_credit), 0) AS cash_balance
+                f.close_balance_debit,
+                f.close_balance_credit
             FROM fact_chart_balance_snapshot f
             JOIN dim_chart_account a
                 ON f.chart_account_key = a.chart_key
@@ -214,7 +217,19 @@ public class OverviewKpiRepository {
                     'cash and cash equivalents',
                     'bank balance'
               )
+            ORDER BY f.date_key DESC
+            LIMIT 1
         ),
+
+        cash_balance AS (
+            SELECT
+                COALESCE(
+                    close_balance_debit - close_balance_credit,
+                    0
+                ) AS cash_balance
+            FROM latest_cash_snapshot
+        ),
+
         cash_flow AS (
             SELECT
                 COALESCE(SUM(f.debit), 0) AS inflow,
@@ -230,11 +245,14 @@ public class OverviewKpiRepository {
                     'bank balance'
               )
         )
+
         SELECT
-            cash_balance.cash_balance,
-            cash_flow.inflow,
-            cash_flow.outflow
-        FROM cash_balance, cash_flow
+            COALESCE(cb.cash_balance, 0) AS cash_balance,
+            COALESCE(cf.inflow, 0) AS inflow,
+            COALESCE(cf.outflow, 0) AS outflow,
+            COALESCE(cf.inflow, 0) - COALESCE(cf.outflow, 0) AS net_cash_flow
+        FROM cash_flow cf
+        LEFT JOIN cash_balance cb ON true
         """;
 
         return jdbcTemplate.queryForObject(
@@ -242,7 +260,8 @@ public class OverviewKpiRepository {
                 (rs, rowNum) -> new OverviewCashSummaryItem(
                         rs.getBigDecimal("cash_balance"),
                         rs.getBigDecimal("inflow"),
-                        rs.getBigDecimal("outflow")
+                        rs.getBigDecimal("outflow"),
+                        rs.getBigDecimal("net_cash_flow")
                 ),
                 companyKey,
                 endDateKey,
@@ -251,8 +270,12 @@ public class OverviewKpiRepository {
                 endDateKey
         );
     }
-    public List<OverviewPipelineFunnelItem> getSalesPipelineFunnel(Integer companyKey) {
-        String sql = """
+    public List<OverviewPipelineFunnelItem> getSalesPipelineFunnel(
+            Integer companyKey,
+            LocalDate startDate,
+            LocalDate endDate
+    ) {
+        StringBuilder sql = new StringBuilder("""
         SELECT
             COALESCE(ws.status_label, 'Unknown') AS stage,
             COALESCE(SUM(f.deal_count), 0) AS deal_count,
@@ -260,27 +283,56 @@ public class OverviewKpiRepository {
         FROM fact_deal f
         LEFT JOIN dim_workstatus ws
             ON ws.workstatus_key = f.workstatus_key
+        JOIN dim_date d
+            ON d.date_key = f.close_date_key
         WHERE f.company_key = ?
           AND COALESCE(f.is_archived, false) = false
+    """);
+
+        if (startDate != null) {
+            sql.append(" AND d.full_date >= ? ");
+        }
+
+        if (endDate != null) {
+            sql.append(" AND d.full_date <= ? ");
+        }
+
+        sql.append("""
         GROUP BY COALESCE(ws.status_label, 'Unknown')
         ORDER BY
             CASE COALESCE(ws.status_label, 'Unknown')
                 WHEN 'Generated' THEN 1
                 WHEN 'Initial Contact' THEN 2
-                WHEN 'Win' THEN 3
-                WHEN 'Lost' THEN 4
-                ELSE 5
+                WHEN 'Backlog' THEN 3
+                WHEN 'To Do' THEN 4
+                WHEN 'In Progress' THEN 5
+                WHEN 'In Review' THEN 6
+                WHEN 'Done' THEN 7
+                WHEN 'Win' THEN 8
+                WHEN 'Lost' THEN 9
+                ELSE 10
             END
-        """;
+    """);
+
+        List<Object> params = new ArrayList<>();
+        params.add(companyKey);
+
+        if (startDate != null) {
+            params.add(startDate);
+        }
+
+        if (endDate != null) {
+            params.add(endDate);
+        }
 
         return jdbcTemplate.query(
-                sql,
+                sql.toString(),
                 (rs, rowNum) -> OverviewPipelineFunnelItem.builder()
                         .stage(rs.getString("stage"))
                         .dealCount(rs.getLong("deal_count"))
                         .pipelineValue(rs.getBigDecimal("pipeline_value"))
                         .build(),
-                companyKey
+                params.toArray()
         );
     }
     public List<OverviewDealStatusItem> getDealStatus(Integer companyKey) {
@@ -526,43 +578,92 @@ public class OverviewKpiRepository {
 
         BigDecimal overdueInvoices = getOverdueInvoicesAmount(companyKey, endDateKey);
         BigDecimal unscheduledLate = getUnscheduledLateRate(companyKey, startDateKey, endDateKey);
-        BigDecimal leadDropOffRate = getLeadDropOffRate(companyKey);
+        BigDecimal leadDropOffRate = getLeadDropOffRate(companyKey, startDateKey, endDateKey);
         BigDecimal operationalBurn = getOperationalBurn(companyKey, startDateKey, endDateKey);
+
+
+        String overdueStatus = overdueInvoices.compareTo(new BigDecimal("100000000")) >= 0
+                ? "Critical"
+                : overdueInvoices.compareTo(BigDecimal.ZERO) > 0
+                ? "Warning"
+                : "Normal";
+
+        String overdueColor = overdueStatus.equals("Critical")
+                ? "red"
+                : overdueStatus.equals("Warning")
+                ? "orange"
+                : "green";
+
+        String lateStatus = unscheduledLate.compareTo(new BigDecimal("5")) >= 0
+                ? "Critical"
+                : unscheduledLate.compareTo(new BigDecimal("2")) >= 0
+                ? "Warning"
+                : "Normal";
+
+        String lateColor = lateStatus.equals("Critical")
+                ? "red"
+                : lateStatus.equals("Warning")
+                ? "orange"
+                : "green";
+
+        String dropOffStatus = leadDropOffRate.compareTo(new BigDecimal("30")) >= 0
+                ? "Critical"
+                : leadDropOffRate.compareTo(new BigDecimal("10")) >= 0
+                ? "Warning"
+                : "Normal";
+
+        String dropOffColor = dropOffStatus.equals("Critical")
+                ? "red"
+                : dropOffStatus.equals("Warning")
+                ? "orange"
+                : "green";
+
+        String burnStatus = operationalBurn.compareTo(new BigDecimal("50000000")) >= 0
+                ? "Critical"
+                : operationalBurn.compareTo(new BigDecimal("20000000")) >= 0
+                ? "Warning"
+                : "Normal";
+
+        String burnColor = burnStatus.equals("Critical")
+                ? "red"
+                : burnStatus.equals("Warning")
+                ? "orange"
+                : "green";
 
         alerts.add(OverviewOperationalAlertItem.builder()
                 .category("Finance")
-                .status(overdueInvoices.compareTo(BigDecimal.ZERO) > 0 ? "Critical" : "Normal")
+                .status(overdueStatus)
                 .title("Overdue Invoices")
                 .value(overdueInvoices)
                 .valueSuffix("")
-                .color(overdueInvoices.compareTo(BigDecimal.ZERO) > 0 ? "red" : "green")
+                .color(overdueColor)
                 .build());
 
         alerts.add(OverviewOperationalAlertItem.builder()
                 .category("HR")
-                .status(unscheduledLate.compareTo(BigDecimal.ZERO) > 0 ? "Warning" : "Normal")
+                .status(lateStatus)
                 .title("Unscheduled Late")
                 .value(unscheduledLate)
                 .valueSuffix("% Avg")
-                .color(unscheduledLate.compareTo(BigDecimal.ZERO) > 0 ? "orange" : "green")
+                .color(lateColor)
                 .build());
 
         alerts.add(OverviewOperationalAlertItem.builder()
                 .category("Sales")
-                .status(leadDropOffRate.compareTo(BigDecimal.ZERO) > 0 ? "Warning" : "Normal")
+                .status(dropOffStatus)
                 .title("Lead Drop-off Rate")
                 .value(leadDropOffRate)
-                .valueSuffix("% Weekly")
-                .color(leadDropOffRate.compareTo(BigDecimal.ZERO) > 0 ? "orange" : "green")
+                .valueSuffix("% Drop-off")
+                .color(dropOffColor)
                 .build());
 
         alerts.add(OverviewOperationalAlertItem.builder()
                 .category("Finance")
-                .status("Normal")
+                .status(burnStatus)
                 .title("Operational Burn")
                 .value(operationalBurn)
-                .valueSuffix(" / Daily")
-                .color("green")
+                .valueSuffix(" / day")
+                .color(burnColor)
                 .build());
 
         return alerts;
@@ -619,7 +720,11 @@ public class OverviewKpiRepository {
         return result != null ? result : BigDecimal.ZERO;
     }
 
-    private BigDecimal getLeadDropOffRate(Integer companyKey) {
+    private BigDecimal getLeadDropOffRate(
+            Integer companyKey,
+            Integer startDateKey,
+            Integer endDateKey
+    ) {
         String sql = """
         WITH deals AS (
             SELECT
@@ -630,8 +735,11 @@ public class OverviewKpiRepository {
             FROM fact_deal f
             LEFT JOIN dim_workstatus ws
                 ON ws.workstatus_key = f.workstatus_key
+            LEFT JOIN dim_date d
+                ON d.date_key = f.close_date_key
             WHERE f.company_key = ?
               AND COALESCE(f.is_archived, false) = false
+              AND d.date_key BETWEEN ? AND ?
         )
         SELECT
             CASE
@@ -644,7 +752,9 @@ public class OverviewKpiRepository {
         BigDecimal result = jdbcTemplate.queryForObject(
                 sql,
                 BigDecimal.class,
-                companyKey
+                companyKey,
+                startDateKey,
+                endDateKey
         );
 
         return result != null ? result : BigDecimal.ZERO;
